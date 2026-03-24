@@ -1,18 +1,20 @@
 import tkinter as tk
 from tkinter import filedialog, Label, Button, Frame
+import tkinter.simpledialog as sd
 from PIL import Image, ImageTk
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
 import torch.nn.functional as F
 import os
+import numpy as np
+import cv2
 
-# --- 1. Configuration ---
+# =========================
+# CONFIG
+# =========================
+MODEL_PATH = 'D:\\Projects\\panel-defect\\pv_defect_model_v2.pth'
 
-# Path to your saved model
-MODEL_PATH = 'pv_defect_model_v2.pth'
-
-# !!! IMPORTANT: This list MUST be identical to the one in your train.py script
 CLASS_NAMES = [
     'Bird-drop', 
     'Clean', 
@@ -24,12 +26,11 @@ CLASS_NAMES = [
     'poop',
     'Good',
     'Shattering',
-    
 ]
 
-NUM_CLASSES = len(CLASS_NAMES)
-# ---------------------
-
+# =========================
+# MAIN CLASS
+# =========================
 class PVDefectApp:
     def __init__(self, root):
         self.root = root
@@ -38,140 +39,258 @@ class PVDefectApp:
 
         self.file_path = None
         self.model = self.load_model()
-        
-        # Define the image transforms (must match validation transforms)
+
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            transforms.Normalize([0.485, 0.456, 0.406],
+                                 [0.229, 0.224, 0.225])
         ])
 
-        # --- Create GUI Widgets ---
-        
-        # Title
-        title_label = Label(root, text="PV Panel Defect Analyzer", font=("Helvetica", 18, "bold"), pady=10)
-        title_label.pack()
+        # UI
+        Label(root, text="PV Panel Defect Analyzer",
+              font=("Helvetica", 18, "bold")).pack(pady=10)
 
-        # Frame for Image
-        self.image_frame = Frame(root, width=300, height=300, relief="sunken", bd=2)
-        self.image_frame.pack(padx=10, pady=10)
-        self.image_label = Label(self.image_frame, text="Upload an image to analyze", font=("Helvetica", 12))
-        self.image_label.pack(expand=True)
+        self.image_frame = Frame(root, width=300, height=300, bd=2, relief="sunken")
+        self.image_frame.pack(pady=10)
 
-        # Frame for Buttons
+        self.image_label = Label(self.image_frame, text="Upload Image")
+        self.image_label.pack()
+
         button_frame = Frame(root)
         button_frame.pack(pady=10)
 
-        upload_btn = Button(button_frame, text="Upload Image", font=("Helvetica", 12), command=self.open_image)
-        upload_btn.grid(row=0, column=0, padx=10)
+        Button(button_frame, text="Upload Image",
+               command=self.open_image).grid(row=0, column=0, padx=10)
 
-        self.analyze_btn = Button(button_frame, text="Analyze", font=("Helvetica", 12, "bold"), state="disabled", command=self.analyze_image)
+        self.analyze_btn = Button(button_frame, text="Analyze",
+                                 state="disabled",
+                                 command=self.analyze_image)
         self.analyze_btn.grid(row=0, column=1, padx=10)
 
-        # Frame for Result
-        result_frame = Frame(root, relief="groove", bd=2)
-        result_frame.pack(fill="x", padx=10, pady=10)
-        
-        self.result_label = Label(result_frame, text="Prediction: ---", font=("Helvetica", 14))
-        self.result_label.pack(pady=10)
-        
-        self.confidence_label = Label(result_frame, text="Confidence: ---", font=("Helvetica", 12))
-        self.confidence_label.pack(pady=(0, 10))
+        Button(button_frame, text="Start Camera",
+               command=self.start_camera).grid(row=0, column=2, padx=10)
 
+        self.result_label = Label(root, text="Prediction: ---")
+        self.result_label.pack()
+
+        self.confidence_label = Label(root, text="Confidence: ---")
+        self.confidence_label.pack()
+
+    # =========================
+    # LOAD MODEL
+    # =========================
     def load_model(self):
-        """Loads the pre-trained model."""
-        print(f"Loading model from {MODEL_PATH}...")
+        print("Loading model...")
+
         if not os.path.exists(MODEL_PATH):
-            print(f"Error: Model file not found at {MODEL_PATH}")
-            print("Please run train.py first to create the model file.")
-            self.root.quit()
+            print(f"❌ Model not found at: {MODEL_PATH}")
             return None
-            
+
         try:
-            # Re-create the model architecture
-            model = models.resnet18(pretrained=False) # Don't need pretrained weights here
+            model = models.resnet18(pretrained=False)
             num_ftrs = model.fc.in_features
-            model.fc = nn.Linear(num_ftrs, NUM_CLASSES)
+            model.fc = nn.Linear(num_ftrs, len(CLASS_NAMES))
 
-            # Load the saved state dict
-            # We use map_location='cpu' so it works on any computer
-            model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device('cpu')))
-            
-            # Set model to evaluation mode (CRITICAL!)
+            model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
             model.eval()
-            
-            print("Model loaded successfully.")
+
+            print("✅ Model loaded successfully")
             return model
+
         except Exception as e:
-            print(f"Error loading model: {e}")
-            self.root.quit()
+            print("❌ Error loading model:", e)
             return None
 
+    # =========================
+    # IMAGE UPLOAD
+    # =========================
     def open_image(self):
-        """Opens a file dialog to select an image."""
         self.file_path = filedialog.askopenfilename(
-            filetypes=[("Image Files", "*.jpg *.jpeg *.png")]
+            filetypes=[("Image Files", "*.jpg *.png *.jpeg")]
         )
-        
+
         if not self.file_path:
             return
-            
-        # Clear previous results
-        self.result_label.config(text="Prediction: ---")
-        self.confidence_label.config(text="Confidence: ---")
 
-        # Open and display the image in the GUI
         img = Image.open(self.file_path)
-        img.thumbnail((300, 300))  # Resize for display
-        
-        # Convert PIL image to Tkinter-compatible image
+        img.thumbnail((300, 300))
+
         self.tk_image = ImageTk.PhotoImage(img)
         self.image_label.config(image=self.tk_image, text="")
-        
-        # Enable the "Analyze" button
+
         self.analyze_btn.config(state="normal")
 
+    # =========================
+    # ANALYZE IMAGE
+    # =========================
     def analyze_image(self):
-        """Analyzes the currently loaded image."""
-        if not self.file_path or not self.model:
+        if not self.model:
+            print("Model not loaded")
             return
 
-        try:
-            # 1. Load and transform the image
-            image = Image.open(self.file_path).convert('RGB')
-            image_tensor = self.transform(image)
-            # Add a batch dimension (C, H, W) -> (B, C, H, W)
-            image_tensor = image_tensor.unsqueeze(0) 
+        image = Image.open(self.file_path).convert('RGB')
+        tensor = self.transform(image).unsqueeze(0)
 
-            # 2. Get prediction
-            with torch.no_grad(): # Disable gradient calculation
-                outputs = self.model(image_tensor)
-                
-                # Get probabilities
-                probabilities = F.softmax(outputs, dim=1)
-                
-                # Get the top class and its confidence
-                confidence, predicted_idx = torch.max(probabilities, 1)
-                
-                class_name = CLASS_NAMES[predicted_idx.item()]
-                confidence_percent = confidence.item() * 100
+        with torch.no_grad():
+            outputs = self.model(tensor)
+            probs = F.softmax(outputs, dim=1)
+            conf, pred = torch.max(probs, 1)
 
-            # 3. Update the GUI
-            self.result_label.config(text=f"Prediction: {class_name}", fg="blue")
-            self.confidence_label.config(text=f"Confidence: {confidence_percent:.2f}%", fg="black")
+        label = CLASS_NAMES[pred.item()]
+        confidence = conf.item() * 100
 
-        except Exception as e:
-            print(f"Error during analysis: {e}")
-            self.result_label.config(text="Error analyzing image", fg="red")
-            self.confidence_label.config(text="---")
+        self.result_label.config(text=f"Prediction: {label}")
+        self.confidence_label.config(text=f"Confidence: {confidence:.2f}%")
+
+    # =========================
+    # CAMERA TYPE SELECTION
+    # =========================
+    def choose_camera_type(self):
+        choice = sd.askstring(
+            "Camera Type",
+            "Enter camera type:\n1 = USB Webcam\n2 = Raspberry Pi Camera\n3 = RTSP Stream"
+        )
+        return choice
+
+    # =========================
+    # CAMERA
+    # =========================
+    def start_camera(self):
+        if not self.model:
+            print("Model not loaded")
+            return
+
+        print("Starting camera...")
+
+        choice = self.choose_camera_type()
+        cap = None
+
+        if choice == "1":
+            print("Using USB Camera")
+            cap = cv2.VideoCapture(0)
+
+        elif choice == "2":
+            print("Using Pi Camera")
+            cap = cv2.VideoCapture(
+                "libcamerasrc ! video/x-raw,width=640,height=480,framerate=30/1 ! videoconvert ! appsink",
+                cv2.CAP_GSTREAMER
+            )
+
+        elif choice == "3":
+            url = input("Enter RTSP URL: ")
+            cap = cv2.VideoCapture(url)
+
+        else:
+            print("Invalid choice, trying default camera...")
+            cap = cv2.VideoCapture(0)
+
+        if not cap or not cap.isOpened():
+            print("❌ Camera not working")
+            return
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame = self.detect_on_frame(frame)
+
+            cv2.imshow("Live Detection", frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:  # ESC key
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+    # =========================
+    # DETECTION WITH NMS, STEP, PANEL CROP
+    # =========================
+    def detect_on_frame(self, frame):
+        h, w, _ = frame.shape
+
+        # =========================
+        # Step 4: Panel crop for testing (optional)
+        # =========================
+        crop_top = int(h * 0.1)
+        crop_bottom = int(h * 0.9)
+        crop_left = int(w * 0.1)
+        crop_right = int(w * 0.9)
+        frame_crop = frame[crop_top:crop_bottom, crop_left:crop_right]
+
+        # =========================
+        # Step 3: Sliding window
+        # =========================
+        step = 180
+        size = 224
+
+        boxes = []
+        scores = []
+
+        fh, fw, _ = frame_crop.shape
+
+        for y in range(0, fh - size, step):
+            for x in range(0, fw - size, step):
+                patch = frame_crop[y:y+size, x:x+size]
+
+                image = Image.fromarray(cv2.cvtColor(patch, cv2.COLOR_BGR2RGB))
+                tensor = self.transform(image).unsqueeze(0)
+
+                with torch.no_grad():
+                    outputs = self.model(tensor)
+                    probs = F.softmax(outputs, dim=1)
+                    conf, pred = torch.max(probs, 1)
+
+                label = CLASS_NAMES[pred.item()]
+                confidence = conf.item()
+
+                # =========================
+                # Step 2: Confidence + filtering
+                # =========================
+                if confidence < 0.95:
+                    continue
+                if label in ["Clean", "Good"]:
+                    continue
+
+                # Adjust box coordinates for cropped frame
+                x1 = x + crop_left
+                y1 = y + crop_top
+                x2 = x1 + size
+                y2 = y1 + size
+
+                boxes.append([x1, y1, x2, y2])
+                scores.append(float(confidence))
+
+        # =========================
+        # Non-Max Suppression
+        # =========================
+        if boxes:
+            indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.95, nms_threshold=0.3)
+            for i in indices:
+                i = i[0] if isinstance(i, (tuple, list, np.ndarray)) else i
+                x1, y1, x2, y2 = boxes[i]
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame,
+                            f"{label} {scores[i]:.2f}",
+                            (x1, y1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 0),
+                            2)
+
+        return frame
 
 
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
-    # Check if model file exists before launching app
+    print("Starting application...")
     if not os.path.exists(MODEL_PATH):
-        print(f"Error: Model file '{MODEL_PATH}' not found.")
-        print("Please run the 'train.py' script first to train and save the model.")
+        print(f"❌ Model not found at: {MODEL_PATH}")
+        input("Press Enter to exit...")
     else:
         root = tk.Tk()
         app = PVDefectApp(root)
