@@ -1,0 +1,15 @@
+path: D:/Projects/panel-defect  # Absolute path to your root dataset folder
+train: train/
+val: val/
+
+names:
+  0: Bird-drop
+  1: Clean
+  2: Dusty
+  3: Electrical-damage
+  4: Good
+  5: Panel-Hail
+  6: Physical-Damage
+  7: poop
+  8: Shattering
+  9: Snow-Covered
