@@ -19,7 +19,4 @@ This script provides a practical, user-facing GUI built with Tkinter. It instant
 ## Training Results
 
 ### Model Accuracy
-![Training and Validation Accuracy](./images/accuracy_plot.png)
-
-### Model Loss
-![Training and Validation Loss](./images/loss_plot.png)
+![Training and Validation Accuracy](./images/image.png)
